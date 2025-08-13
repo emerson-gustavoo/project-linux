@@ -1,0 +1,67 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>4Linux Downloader (Web)</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <h1>4Linux Downloader (Web)</h1>
+  <form id="f" action="/start" method="post" enctype="multipart/form-data" target="_self">
+    <div class="row">
+      <label>URL do curso/índice:</label>
+      <input name="course_url" placeholder="https://aia.4linux.com.br/course/view.php?id=202" required>
+    </div>
+    <div class="row">
+      <label>Cookies (Netscape .txt):</label>
+      <input type="file" name="cookies" required>
+    </div>
+    <div class="row">
+      <label>Pasta de saída (vídeos):</label>
+      <input name="out_dir" placeholder="C:\Users\SEU_USUARIO\Videos\4linux\MEU_CURSO" required>
+    </div>
+    <div class="row">
+      <label>FFmpeg (pasta do ffmpeg.exe) – opcional:</label>
+      <input name="ffmpeg_dir" placeholder="C:\Users\SEU_USUARIO\AppData\Local\Microsoft\WinGet\Links">
+    </div>
+    <div class="row">
+      <label>Downloads simultâneos:</label>
+      <input name="workers" type="number" min="1" max="6" value="3">
+    </div>
+    <div class="row">
+      <button type="submit">Coletar + Baixar</button>
+      <a href="/download/urls" class="btn" target="_blank">Baixar lista (quando pronta)</a>
+      <button type="button" id="clear-logs" class="btn outline">Limpar logs</button>
+    </div>
+
+  <h2>Logs</h2>
+  <pre id="logs"></pre>
+
+  <script>
+  async function refreshLogs(){
+    try{
+      const res = await fetch('/logs?_=' + Date.now());
+      const txt = await res.text();
+      const el = document.getElementById('logs');
+      el.textContent = txt;
+      el.scrollTop = el.scrollHeight;
+    }catch(e){}
+  }
+  setInterval(refreshLogs, 1500);
+  refreshLogs();
+
+  // >>> LIMPADOR <<<
+  async function clearLogs(){
+    try{
+      const r = await fetch('/logs/clear', { method: 'POST' });
+      // zera a visualização imediatamente
+      document.getElementById('logs').textContent = '';
+    } catch(e) { /* ignore */ }
+  }
+  document.getElementById('clear-logs').addEventListener('click', clearLogs);
+</script>
+
+
+
+</body>
+</html>

@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.log
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual env
+venv/
+.env
+.env.*
+*.env
+
+# VS Code / IDE
+.vscode/
+.idea/
+
+# Build / dist
+build/
+dist/
+
+# SO
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# App específico (não subir mídia/execs/sessões)
+downloads/
+cookies.txt
+cookies/
+sessions/
+archive.txt
+yt-dlp.conf
+*.part
+*.temp
+*.aria2
+*.crdownload
+
+# Binaries locais
+ffmpeg/
+ffmpeg.exe
+yt-dlp.exe
+
+# DBs locais
+*.sqlite*
+*.db
