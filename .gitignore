@@ -47,3 +47,12 @@ yt-dlp.exe
 # DBs locais
 *.sqlite*
 *.db
+
+
+# Pasta de dados
+data/
+!data/.gitkeep
+
+# Navegadores Playwright
+playwright/.local-browsers/
+

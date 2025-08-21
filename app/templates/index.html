@@ -7,6 +7,7 @@
 </head>
 <body>
   <h1>4Linux Downloader (Web)</h1>
+
   <form id="f" action="/start" method="post" enctype="multipart/form-data" target="_self">
     <div class="row">
       <label>URL do curso/índice:</label>
@@ -18,11 +19,11 @@
     </div>
     <div class="row">
       <label>Pasta de saída (vídeos):</label>
-      <input name="out_dir" placeholder="C:\Users\SEU_USUARIO\Videos\4linux\MEU_CURSO" required>
+      <input name="out_dir" placeholder="C:\\Users\\SEU_USUARIO\\Videos\\4linux\\MEU_CURSO" required>
     </div>
     <div class="row">
       <label>FFmpeg (pasta do ffmpeg.exe) – opcional:</label>
-      <input name="ffmpeg_dir" placeholder="C:\Users\SEU_USUARIO\AppData\Local\Microsoft\WinGet\Links">
+      <input name="ffmpeg_dir" placeholder="C:\\Users\\SEU_USUARIO\\AppData\\Local\\Microsoft\\WinGet\\Links">
     </div>
     <div class="row">
       <label>Downloads simultâneos:</label>
@@ -31,37 +32,23 @@
     <div class="row">
       <button type="submit">Coletar + Baixar</button>
       <a href="/download/urls" class="btn" target="_blank">Baixar lista (quando pronta)</a>
-      <button type="button" id="clear-logs" class="btn outline">Limpar logs</button>
+      <a href="/download/report" class="btn" target="_blank">Baixar relatório CSV</a>
     </div>
+  </form>
 
   <h2>Logs</h2>
   <pre id="logs"></pre>
 
   <script>
-  async function refreshLogs(){
-    try{
-      const res = await fetch('/logs?_=' + Date.now());
-      const txt = await res.text();
-      const el = document.getElementById('logs');
-      el.textContent = txt;
-      el.scrollTop = el.scrollHeight;
-    }catch(e){}
-  }
-  setInterval(refreshLogs, 1500);
-  refreshLogs();
-
-  // >>> LIMPADOR <<<
-  async function clearLogs(){
-    try{
-      const r = await fetch('/logs/clear', { method: 'POST' });
-      // zera a visualização imediatamente
-      document.getElementById('logs').textContent = '';
-    } catch(e) { /* ignore */ }
-  }
-  document.getElementById('clear-logs').addEventListener('click', clearLogs);
-</script>
-
-
-
+    async function refreshLogs(){
+      try{
+        const res = await fetch('/logs?_=' + Date.now());
+        const txt = await res.text();
+        document.getElementById('logs').textContent = txt;
+      }catch(e){}
+    }
+    setInterval(refreshLogs, 1500);
+    refreshLogs();
+  </script>
 </body>
 </html>
