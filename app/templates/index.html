@@ -36,6 +36,19 @@
     </div>
   </form>
 
+<h2>Converter cookies (JSON → TXT)</h2>
+<form action="/convert-cookies" method="post" enctype="multipart/form-data" target="_blank">
+  <div class="row">
+    <label>Arquivo JSON exportado do navegador:</label>
+    <input type="file" name="file" accept=".json" required>
+  </div>
+  <div class="row">
+    <button type="submit">Converter e baixar .txt</button>
+  </div>
+</form>
+
+
+
   <h2>Logs</h2>
   <pre id="logs"></pre>
 
