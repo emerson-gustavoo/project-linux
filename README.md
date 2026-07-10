@@ -31,3 +31,10 @@ Acompanhe os logs na página. Quando gerar, baixe a lista em **Baixar lista**.
 ## Observações
 - Se der 401/403, gere um cookies Netscape novo e reinicie o processo.
 - O app cria/usa `data/urls_unique.txt`, `data/run.log`, `data/baixados.txt`.
+
+
+
+#comando para rodar atualmente 
+>> venv\Scripts\activate
+>> python -m playwright install chromium
+>> uvicorn app.main:app --reload

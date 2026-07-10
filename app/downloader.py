@@ -1,141 +1,247 @@
-# app/downloader.py
+from __future__ import annotations
+import asyncio
 import os
-import subprocess
-import shutil
+import tempfile
 import time
+from dataclasses import dataclass
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-# ---------- Localização do yt-dlp ----------
-def find_ytdlp_binary():
-    """
-    Procura o executável standalone do yt-dlp no caminho fixo deste PC.
-    """
-    fixed_path = r"C:\Users\Emerson Gustavo\Downloads\yt-dlp.exe"
-    if os.path.exists(fixed_path):
-        return fixed_path
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
 
-    # fallback (caso mude no futuro)
-    here = os.path.dirname(os.path.abspath(__file__))
-    candidates = [
-        os.path.abspath(os.path.join(here, "..", "venv", "Scripts", "yt-dlp.exe")),
-        os.path.join(os.path.expanduser("~"), "Downloads", "yt-dlp.exe"),
-        shutil.which("yt-dlp.exe") or shutil.which("yt-dlp"),
-    ]
-    for c in candidates:
-        if c and os.path.exists(c):
-            return os.path.abspath(c)
+router = APIRouter()
 
-    raise RuntimeError(f"yt-dlp.exe não encontrado em {fixed_path} nem nos locais padrões.")
+# =========
+# Models
+# =========
 
-# ---------- Montagem do comando ----------
-def _build_cmd(ytdlp, batch_file, out_dir, cookies_path, referer,
-               ffmpeg_path, archive_path, workers):
-    cmd = [
-        ytdlp,
-        "--no-check-certificate",
-        "--cookies", cookies_path,
-        "--referer", referer,
-        "-P", out_dir,
-        "--batch-file", batch_file,
-        "-N", str(max(1, int(workers))),
-        "-f", "bv*+ba/b",
-        "-o", "%(title)s [%(id)s].%(ext)s",
+class CookieItem(BaseModel):
+    name: str
+    value: str
+    domain: str
+    path: str = "/"
+    secure: bool = False
+    httpOnly: Optional[bool] = None
+    hostOnly: Optional[bool] = None
+    session: Optional[bool] = None
+    expirationDate: Optional[float] = None  # segundos
+    expires: Optional[float] = None         # segundos
+    expiresUTC: Optional[float] = None      # milissegundos em alguns dumps
 
-        "--ignore-errors",
-        "--continue",
-        "--retries", "infinite",
-        "--fragment-retries", "100",
-        "--retry-sleep", "http:exp=10:600:2",
-        "--retry-sleep", "fragment:exp=10:600:2",
-        "--no-abort-on-unavailable-fragments",
-        "--socket-timeout", "30",
-        "--hls-prefer-native",
-        "--fixup", "warn",
-        "--merge-output-format", "mp4",
-    ]
+class ConvertPayload(BaseModel):
+    cookies: List[CookieItem]
 
-    if archive_path:
-        cmd += ["--download-archive", archive_path]
-    if ffmpeg_path and os.path.exists(ffmpeg_path):
-        cmd += ["--ffmpeg-location", ffmpeg_path]
-
-    return cmd
-
-def _terminate(proc):
-    try:
-        proc.terminate()
-        try:
-            proc.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-    except Exception:
-        pass
-
-# ---------- Runner com autotune ----------
-def run_ytdlp(batch_file, out_dir, cookies_path, referer,
-              ffmpeg_dir=None, archive_path=None, workers=3, logger=print):
-    ytdlp = find_ytdlp_binary()
-
-    ffmpeg_path = None
-    if ffmpeg_dir:
-        if os.path.isdir(ffmpeg_dir):
-            cand = os.path.join(ffmpeg_dir, "ffmpeg.exe")
-            ffmpeg_path = cand if os.path.exists(cand) else ffmpeg_dir
-        else:
-            ffmpeg_path = ffmpeg_dir
-
-    min_workers = 1
-    max_restarts = 3
-    err_threshold_consecutive = 5
-    keywords = (
-        "HTTP Error 403", "HTTP Error 404",
-        "403: Forbidden", "404 Not Found",
-        "ERROR: 403", "ERROR: 404",
+class DownloadPayload(BaseModel):
+    urls: List[str] = Field(..., description="Lista de URLs para o yt-dlp baixar")
+    output_dir: Optional[str] = Field(None, description="Diretório de saída. Se vazio, usa a pasta atual.")
+    cookies_txt: Optional[str] = Field(None, description="Conteúdo do cookies.txt (Netscape). Opcional")
+    concurrency: int = Field(3, ge=1, le=10, description="Número de downloads em paralelo (1-10)")
+    extra_args: Optional[List[str]] = Field(
+        default=None,
+        description="Argumentos extras do yt-dlp. Ex: [\"-f\",\"bv+ba/b\"]"
     )
 
-    current_workers = max(min_workers, int(workers))
-    restarts = 0
+# =========
+# Cookie conversion
+# =========
 
-    while True:
-        cmd = _build_cmd(
-            ytdlp=ytdlp,
-            batch_file=batch_file,
-            out_dir=out_dir,
-            cookies_path=cookies_path,
-            referer=referer,
-            ffmpeg_path=ffmpeg_path,
-            archive_path=archive_path,
-            workers=current_workers,
+def _as_bool(v: Any) -> bool:
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return bool(v)
+    if isinstance(v, str):
+        return v.strip().lower() in {"1", "true", "yes", "y", "t"}
+    return False
+
+def _pick(d: Dict[str, Any], *keys: str, default=None):
+    for k in keys:
+        if k in d:
+            return d[k]
+    return default
+
+def _cookie_to_tuple(c: CookieItem) -> Tuple[str, str, str, str, int, str, str]:
+    name = c.name or ""
+    value = c.value or ""
+    domain = (c.domain or "").strip()
+    path = c.path or "/"
+    secure = "TRUE" if c.secure else "FALSE"
+
+    host_only = bool(c.hostOnly) if c.hostOnly is not None else False
+    # include_subdomains: FALSE se hostOnly ou se domain não começar com ponto.
+    include_sub = "FALSE" if host_only or (domain and not domain.startswith(".")) else "TRUE"
+
+    # Expiração: tenta várias chaves; defaults p/ 0 (sessão)
+    exp = 0
+    for cand, mult in ((c.expires, 1), (c.expirationDate, 1), (c.expiresUTC, 1/1000)):
+        if cand:
+            try:
+                v = int(float(cand) * mult)
+                if v > 0:
+                    exp = v
+                    break
+            except Exception:
+                pass
+
+    # Domínio com ponto se include_sub == TRUE
+    line_domain = domain if include_sub == "FALSE" else (domain if domain.startswith(".") else f".{domain}")
+    return (line_domain, include_sub, path, secure, exp, name, value)
+
+def cookies_to_netscape_lines(cookies: Iterable[CookieItem]) -> List[str]:
+    return [f"{d}\t{sub}\t{p}\t{s}\t{e}\t{n}\t{v}" for (d, sub, p, s, e, n, v) in (_cookie_to_tuple(c) for c in cookies)]
+
+# =========
+# Endpoints: cookies
+# =========
+
+@router.post("/convert-cookies")
+def convert_cookies(payload: ConvertPayload):
+    try:
+        lines = cookies_to_netscape_lines(payload.cookies)
+        header = "# Netscape HTTP Cookie File\n# Generated by 4linux-downloader\n"
+        return {"cookies_txt": header + "\n".join(lines) + "\n"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Falha ao converter cookies: {e}")
+
+# =========
+# yt-dlp runner (concorrente)
+# =========
+
+@dataclass
+class JobResult:
+    url: str
+    returncode: int
+    stdout: str
+    stderr: str
+    started_at: float
+    ended_at: float
+
+def _build_command(url: str, *, output_dir: Optional[str], cookies_file: Optional[str], extra_args: Optional[List[str]]) -> List[str]:
+    cmd: List[str] = ["yt-dlp"]
+
+    # Flags "resilientes" padrão
+    # -N controla conexões/fragmentos simultâneos (útil p/ HLS/DASH)
+    cmd += [
+        "--no-warnings",
+        "--ignore-config",
+        "--no-continue",            # ou troque para --continue, se preferir retomar
+        "--retries", "10",
+        "--fragment-retries", "10",
+        "-N", "4",
+        "--concurrent-fragments", "4",
+    ]
+
+    # Respeita output_dir, mas deixa yt-dlp nomear arquivos
+    if output_dir:
+        cmd += ["-P", output_dir]
+
+    # cookies.txt se fornecido
+    if cookies_file:
+        cmd += ["--cookies", cookies_file]
+
+    # argumentos extras customizados
+    if extra_args:
+        cmd += list(extra_args)
+
+    cmd.append(url)
+    return cmd
+
+async def _run_one(url: str, sem: asyncio.Semaphore, *, output_dir: Optional[str], cookies_file: Optional[str], extra_args: Optional[List[str]]) -> JobResult:
+    async with sem:
+        started = time.time()
+        cmd = _build_command(url, output_dir=output_dir, cookies_file=cookies_file, extra_args=extra_args)
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        out_b, err_b = await proc.communicate()
+        ended = time.time()
+        return JobResult(
+            url=url,
+            returncode=proc.returncode,
+            stdout=out_b.decode("utf-8", errors="ignore"),
+            stderr=err_b.decode("utf-8", errors="ignore"),
+            started_at=started,
+            ended_at=ended,
         )
 
-        logger(" ".join(f'"{c}"' if (" " in c and not c.startswith("--")) else c for c in cmd))
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+async def run_ytdlp_async(
+    urls: List[str],
+    *,
+    concurrency: int = 3,
+    output_dir: Optional[str] = None,
+    cookies_txt: Optional[str] = None,
+    extra_args: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    if not urls:
+        raise ValueError("Nenhuma URL fornecida.")
 
-        errors_consec = 0
-        autotune_triggered = False
+    # Garante diretório de saída
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
 
-        for line in proc.stdout:
-            line = line.rstrip("\n")
-            logger(line)
-            if any(k in line for k in keywords):
-                errors_consec += 1
+    # Se veio cookies_txt, grava temporário
+    tmp_cookie_path = None
+    if cookies_txt:
+        fd, tmp_cookie_path = tempfile.mkstemp(prefix="cookies_", suffix=".txt")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(cookies_txt)
+
+    sem = asyncio.Semaphore(concurrency)
+    started = time.time()
+    try:
+        tasks = [
+            _run_one(u, sem, output_dir=output_dir, cookies_file=tmp_cookie_path, extra_args=extra_args)
+            for u in urls
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        ok = True
+        jobs: List[Dict[str, Any]] = []
+        for r in results:
+            if isinstance(r, Exception):
+                ok = False
+                jobs.append({"url": "unknown", "error": str(r)})
             else:
-                if line.strip():
-                    errors_consec = 0
-            if errors_consec >= err_threshold_consecutive:
-                autotune_triggered = True
-                break
+                ok = ok and (r.returncode == 0)
+                jobs.append({
+                    "url": r.url,
+                    "returncode": r.returncode,
+                    "duration": round(r.ended_at - r.started_at, 3),
+                    "stdout": r.stdout[-4000:],  # limita o tamanho no JSON
+                    "stderr": r.stderr[-4000:],
+                })
 
-        try:
-            rc = proc.wait(timeout=2)
-        except subprocess.TimeoutExpired:
-            rc = None
+        return {
+            "ok": ok,
+            "count": len(urls),
+            "concurrency": concurrency,
+            "output_dir": output_dir or os.getcwd(),
+            "duration": round(time.time() - started, 3),
+            "jobs": jobs,
+        }
+    finally:
+        if tmp_cookie_path:
+            try:
+                os.remove(tmp_cookie_path)
+            except OSError:
+                pass
 
-        if autotune_triggered and current_workers > min_workers and restarts < max_restarts:
-            logger(f"⚠️ Muitos erros 403/404 detectados. Reduzindo -N: {current_workers} → {current_workers - 1}")
-            _terminate(proc)
-            current_workers -= 1
-            restarts += 1
-            time.sleep(2)
-            continue
+# =========
+# Endpoints: download
+# =========
 
-        return rc if rc is not None else 1
+@router.post("/download")
+async def download(payload: DownloadPayload):
+    try:
+        result = await run_ytdlp_async(
+            urls=payload.urls,
+            concurrency=payload.concurrency,
+            output_dir=payload.output_dir,
+            cookies_txt=payload.cookies_txt,
+            extra_args=payload.extra_args,
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Falha no download: {e}")
