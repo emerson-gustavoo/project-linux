@@ -44,7 +44,7 @@ def reset_log():
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request, "index.html")
 
 @app.get("/healthz")
 def healthz():
@@ -92,8 +92,8 @@ async def start(
     else:
         log("Nenhum arquivo de cookies recebido.")
         return templates.TemplateResponse(
-            "index.html",
-            {"request": request, "error": "Envie o cookies.txt (Netscape)."}
+            request, "index.html",
+            {"error": "Envie o cookies.txt (Netscape)."}
         )
 
     def worker():
@@ -171,7 +171,7 @@ async def start(
             log(f"ERRO: {repr(e)}\n{traceback.format_exc()}")
 
     threading.Thread(target=worker, daemon=True).start()
-    return templates.TemplateResponse("index.html", {"request": request, "message": "Processo iniciado. Veja os logs abaixo."})
+    return templates.TemplateResponse(request, "index.html", {"message": "Processo iniciado. Veja os logs abaixo."})
 
 # upload de arquivo JSON e retorno de cookies.txt como attachment (para baixar no navegador)
 @app.post("/convert-cookies")
