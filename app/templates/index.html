@@ -1,63 +1,205 @@
 <!doctype html>
-<html>
+<html lang="pt-br">
 <head>
   <meta charset="utf-8">
-  <title>4Linux Downloader (Web)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>4Linux Downloader</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <h1>4Linux Downloader (Web)</h1>
+  <div class="shell">
 
-  <form id="f" action="/start" method="post" enctype="multipart/form-data" target="_self">
-    <div class="row">
-      <label>URL do curso/índice:</label>
-      <input name="course_url" placeholder="https://aia.4linux.com.br/course/view.php?id=202" required>
-    </div>
-    <div class="row">
-      <label>Cookies (Netscape .txt):</label>
-      <input type="file" name="cookies" required>
-    </div>
-    <div class="row">
-      <label>Pasta de saída (vídeos):</label>
-      <input name="out_dir" placeholder="C:\\Users\\SEU_USUARIO\\Videos\\4linux\\MEU_CURSO" required>
-    </div>
-    <div class="row">
-      <label>FFmpeg (pasta do ffmpeg.exe) – opcional:</label>
-      <input name="ffmpeg_dir" placeholder="C:\\Users\\SEU_USUARIO\\AppData\\Local\\Microsoft\\WinGet\\Links">
-    </div>
-    <div class="row">
-      <label>Downloads simultâneos:</label>
-      <input name="workers" type="number" min="1" max="6" value="3">
-    </div>
-    <div class="row">
-      <button type="submit">Coletar + Baixar</button>
-      <a href="/download/urls" class="btn" target="_blank">Baixar lista (quando pronta)</a>
-      <a href="/download/report" class="btn" target="_blank">Baixar relatório CSV</a>
-    </div>
-  </form>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">4L</span>
+        <div class="brand-txt">
+          <span class="brand-name">Downloader</span>
+          <span class="brand-sub">coletor + downloader de cursos Vimeo/Moodle</span>
+        </div>
+      </div>
+      <div id="status" class="status status--idle">
+        <span class="status-dot"></span>
+        <span id="status-label" class="status-label">ocioso</span>
+      </div>
+    </header>
 
-<h2>Converter cookies (JSON → TXT)</h2>
-<form action="/convert-cookies" method="post" enctype="multipart/form-data" target="_blank">
-  <div class="row">
-    <label>Arquivo JSON exportado do navegador:</label>
-    <input type="file" name="file" accept=".json" required>
+    <ol class="pipeline" aria-label="etapas do processo">
+      <li class="pipe-step" data-phase="collect">
+        <span class="pipe-num">01</span>
+        <span class="pipe-name">Coletar IDs</span>
+        <span class="pipe-desc">varre o curso e monta a lista</span>
+      </li>
+      <li class="pipe-arrow" aria-hidden="true">→</li>
+      <li class="pipe-step" data-phase="download">
+        <span class="pipe-num">02</span>
+        <span class="pipe-name">Baixar vídeos</span>
+        <span class="pipe-desc">yt-dlp grava no destino</span>
+      </li>
+    </ol>
+
+    {% if message %}<div class="flash flash--ok">{{ message }}</div>{% endif %}
+    {% if error %}<div class="flash flash--err">{{ error }}</div>{% endif %}
+
+    <main class="grid">
+
+      <section class="col-config">
+        <form id="f" class="card" action="/start" method="post" enctype="multipart/form-data" target="_self">
+          <h2 class="card-title"><span class="card-kicker">execução</span>Nova coleta</h2>
+
+          <fieldset class="group">
+            <legend>Origem</legend>
+            <div class="field">
+              <label for="course_url">Endereço do curso</label>
+              <input id="course_url" name="course_url" class="mono" placeholder="https://aia.4linux.com.br/course/view.php?id=202" required>
+            </div>
+            <div class="field">
+              <label for="cookies">Cookies <span class="hint-inline">.txt Netscape</span></label>
+              <input id="cookies" type="file" name="cookies" accept=".txt" required>
+              <p class="hint">Sessão autenticada do curso. Se der 401/403, gere um novo e reenvie.</p>
+            </div>
+          </fieldset>
+
+          <fieldset class="group">
+            <legend>Destino</legend>
+            <div class="field">
+              <label for="out_dir">Pasta de destino</label>
+              <input id="out_dir" name="out_dir" class="mono" placeholder="/downloads" required>
+              <p class="hint">Caminho no servidor onde o app roda (não no seu PC). Em Docker, aponte para o volume.</p>
+            </div>
+            <div class="field">
+              <label for="ffmpeg_dir">FFmpeg <span class="hint-inline">opcional</span></label>
+              <input id="ffmpeg_dir" name="ffmpeg_dir" class="mono" placeholder="deixe vazio se estiver no PATH">
+            </div>
+          </fieldset>
+
+          <fieldset class="group">
+            <legend>Ritmo</legend>
+            <div class="row-2">
+              <div class="field">
+                <label for="workers">Vídeos em paralelo</label>
+                <input id="workers" name="workers" type="number" min="1" max="6" value="2">
+              </div>
+              <div class="field">
+                <label for="fragments">Conexões por vídeo</label>
+                <input id="fragments" name="fragments" type="number" min="1" max="16" value="4">
+              </div>
+            </div>
+            <div class="row-2">
+              <div class="field">
+                <label for="limit_rate">Limite de velocidade</label>
+                <input id="limit_rate" name="limit_rate" class="mono" placeholder="ex.: 5M — vazio = sem limite">
+              </div>
+              <div class="field">
+                <label for="sleep_interval">Pausa entre vídeos</label>
+                <input id="sleep_interval" name="sleep_interval" type="number" min="0" max="60" value="3">
+                <p class="hint">segundos</p>
+              </div>
+            </div>
+            <p class="hint hint--block">Paralelo total = vídeos × conexões. Valores altos aceleram, mas aumentam o risco de rate-limit (429). Comece baixo.</p>
+          </fieldset>
+
+          <div class="actions">
+            <button type="submit" class="btn btn--primary">Coletar e baixar</button>
+            <a href="/download/urls" class="btn btn--ghost" target="_blank" rel="noopener">Lista de URLs</a>
+            <a href="/download/report" class="btn btn--ghost" target="_blank" rel="noopener">Relatório CSV</a>
+          </div>
+        </form>
+
+        <form class="card card--util" action="/convert-cookies" method="post" enctype="multipart/form-data" target="_blank">
+          <h2 class="card-title"><span class="card-kicker">utilitário</span>Converter cookies</h2>
+          <p class="hint hint--block">Transforma o JSON exportado do navegador no formato Netscape <code>.txt</code> que o coletor usa.</p>
+          <div class="field">
+            <label for="cookies_json">Arquivo JSON</label>
+            <input id="cookies_json" type="file" name="file" accept=".json" required>
+          </div>
+          <div class="actions">
+            <button type="submit" class="btn btn--secondary">Converter e baixar .txt</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="col-console">
+        <div class="card console">
+          <div class="console-head">
+            <div class="console-dots" aria-hidden="true"><i></i><i></i><i></i></div>
+            <span class="console-title">run.log</span>
+            <button id="scroll-toggle" type="button" class="console-btn" title="acompanhar o fim do log">auto-scroll: on</button>
+          </div>
+          <pre id="logs" class="console-body">Sem execução ainda. Preencha o formulário e clique em “Coletar e baixar”.</pre>
+        </div>
+      </section>
+
+    </main>
+
+    <footer class="foot">
+      <span>uso pessoal — baixe apenas cursos aos quais você tem acesso</span>
+    </footer>
   </div>
-  <div class="row">
-    <button type="submit">Converter e baixar .txt</button>
-  </div>
-</form>
-
-
-
-  <h2>Logs</h2>
-  <pre id="logs"></pre>
 
   <script>
+    const logsEl = document.getElementById('logs');
+    const statusEl = document.getElementById('status');
+    const statusLabel = document.getElementById('status-label');
+    const steps = {
+      collect: document.querySelector('.pipe-step[data-phase="collect"]'),
+      download: document.querySelector('.pipe-step[data-phase="download"]'),
+    };
+    let autoScroll = true;
+    const scrollBtn = document.getElementById('scroll-toggle');
+    scrollBtn.addEventListener('click', () => {
+      autoScroll = !autoScroll;
+      scrollBtn.textContent = 'auto-scroll: ' + (autoScroll ? 'on' : 'off');
+    });
+
+    function classify(line){
+      if (/erro|error|traceback|401|403|falha/i.test(line)) return 'log-err';
+      if (/finalizado|sucesso=true|salvo|relat[óo]rio/i.test(line)) return 'log-ok';
+      if (/iniciando|coleta|baixad/i.test(line)) return 'log-run';
+      return '';
+    }
+
+    function setPhase(text){
+      const collecting = /coleta/i.test(text) && !/iniciando downloads/i.test(text);
+      const downloading = /iniciando downloads/i.test(text);
+      const done = /yt-dlp finalizado/i.test(text);
+      steps.collect.classList.toggle('is-active', collecting && !done);
+      steps.download.classList.toggle('is-active', downloading && !done);
+      steps.collect.classList.toggle('is-done', downloading || done);
+      steps.download.classList.toggle('is-done', done);
+    }
+
+    function setStatus(text){
+      let cls = 'status--idle', label = 'ocioso';
+      if (text.trim()){
+        if (/yt-dlp finalizado/i.test(text)){ cls = 'status--done'; label = 'concluído'; }
+        else if (/erro/i.test(text) && !/finalizado/i.test(text)){ cls = 'status--err'; label = 'com erro'; }
+        else { cls = 'status--run'; label = 'em execução'; }
+      }
+      statusEl.className = 'status ' + cls;
+      statusLabel.textContent = label;
+    }
+
     async function refreshLogs(){
       try{
         const res = await fetch('/logs?_=' + Date.now());
         const txt = await res.text();
-        document.getElementById('logs').textContent = txt;
+        if (!txt.trim()){
+          logsEl.textContent = 'Sem execução ainda. Preencha o formulário e clique em “Coletar e baixar”.';
+          logsEl.classList.add('is-empty');
+        } else {
+          logsEl.classList.remove('is-empty');
+          logsEl.innerHTML = txt.replace(/\n+$/,'').split('\n').map(l => {
+            const safe = l.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+            const c = classify(l);
+            return c ? `<span class="${c}">${safe}</span>` : `<span>${safe}</span>`;
+          }).join('\n');
+          if (autoScroll) logsEl.scrollTop = logsEl.scrollHeight;
+        }
+        setStatus(txt);
+        setPhase(txt);
       }catch(e){}
     }
     setInterval(refreshLogs, 1500);

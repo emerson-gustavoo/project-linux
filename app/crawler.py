@@ -69,8 +69,14 @@ def collect_vimeo_ids(
     # DEBUG: set DEBUG_HEADFUL=1 para ver o Chromium abrindo
     headless = os.getenv("DEBUG_HEADFUL") not in ("1", "true", "True")
 
+    # Em container (root), o Chromium precisa de --no-sandbox. Ativado via env
+    # CHROMIUM_NO_SANDBOX=1 (definido no docker-compose); no Windows fica desligado.
+    launch_args = []
+    if os.getenv("CHROMIUM_NO_SANDBOX", "").lower() in ("1", "true", "yes"):
+        launch_args += ["--no-sandbox", "--disable-dev-shm-usage"]
+
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=headless)
+        browser = p.chromium.launch(headless=headless, args=launch_args)
         ctx = browser.new_context()
         ctx.add_cookies(cookies)
         page = ctx.new_page()
