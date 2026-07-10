@@ -36,6 +36,10 @@ class DownloadPayload(BaseModel):
     output_dir: Optional[str] = Field(None, description="Diretório de saída. Se vazio, usa a pasta atual.")
     cookies_txt: Optional[str] = Field(None, description="Conteúdo do cookies.txt (Netscape). Opcional")
     concurrency: int = Field(3, ge=1, le=10, description="Número de downloads em paralelo (1-10)")
+    # --- controles de ritmo (freios) ---
+    limit_rate: Optional[str] = Field(None, description="Teto de velocidade por download. Ex: '5M', '800K'. Vazio = sem limite.")
+    sleep_interval: int = Field(0, ge=0, le=60, description="Segundos de pausa entre vídeos. 0 = sem pausa.")
+    concurrent_fragments: int = Field(4, ge=1, le=16, description="Fragmentos (conexões) simultâneos por vídeo.")
     extra_args: Optional[List[str]] = Field(
         default=None,
         description="Argumentos extras do yt-dlp. Ex: [\"-f\",\"bv+ba/b\"]"
@@ -116,20 +120,35 @@ class JobResult:
     started_at: float
     ended_at: float
 
-def _build_command(url: str, *, output_dir: Optional[str], cookies_file: Optional[str], extra_args: Optional[List[str]]) -> List[str]:
+def _build_command(
+    url: str,
+    *,
+    output_dir: Optional[str],
+    cookies_file: Optional[str],
+    extra_args: Optional[List[str]],
+    concurrent_fragments: int = 4,
+    limit_rate: Optional[str] = None,
+    sleep_interval: int = 0,
+) -> List[str]:
     cmd: List[str] = ["yt-dlp"]
 
-    # Flags "resilientes" padrão
-    # -N controla conexões/fragmentos simultâneos (útil p/ HLS/DASH)
+    # Flags "resilientes" padrão.
+    # OBS: -N é o atalho de --concurrent-fragments (mesma flag), então usamos só uma.
+    frags = max(1, int(concurrent_fragments or 1))
     cmd += [
         "--no-warnings",
         "--ignore-config",
         "--no-continue",            # ou troque para --continue, se preferir retomar
         "--retries", "10",
         "--fragment-retries", "10",
-        "-N", "4",
-        "--concurrent-fragments", "4",
+        "--concurrent-fragments", str(frags),
     ]
+
+    # Freios opcionais (ritmo / discrição com o servidor de origem)
+    if limit_rate:
+        cmd += ["--limit-rate", str(limit_rate)]
+    if sleep_interval and int(sleep_interval) > 0:
+        cmd += ["--sleep-interval", str(int(sleep_interval))]
 
     # Respeita output_dir, mas deixa yt-dlp nomear arquivos
     if output_dir:
@@ -146,10 +165,28 @@ def _build_command(url: str, *, output_dir: Optional[str], cookies_file: Optiona
     cmd.append(url)
     return cmd
 
-async def _run_one(url: str, sem: asyncio.Semaphore, *, output_dir: Optional[str], cookies_file: Optional[str], extra_args: Optional[List[str]]) -> JobResult:
+async def _run_one(
+    url: str,
+    sem: asyncio.Semaphore,
+    *,
+    output_dir: Optional[str],
+    cookies_file: Optional[str],
+    extra_args: Optional[List[str]],
+    concurrent_fragments: int = 4,
+    limit_rate: Optional[str] = None,
+    sleep_interval: int = 0,
+) -> JobResult:
     async with sem:
         started = time.time()
-        cmd = _build_command(url, output_dir=output_dir, cookies_file=cookies_file, extra_args=extra_args)
+        cmd = _build_command(
+            url,
+            output_dir=output_dir,
+            cookies_file=cookies_file,
+            extra_args=extra_args,
+            concurrent_fragments=concurrent_fragments,
+            limit_rate=limit_rate,
+            sleep_interval=sleep_interval,
+        )
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -173,6 +210,9 @@ async def run_ytdlp_async(
     output_dir: Optional[str] = None,
     cookies_txt: Optional[str] = None,
     extra_args: Optional[List[str]] = None,
+    limit_rate: Optional[str] = None,
+    sleep_interval: int = 0,
+    concurrent_fragments: int = 4,
 ) -> Dict[str, Any]:
     if not urls:
         raise ValueError("Nenhuma URL fornecida.")
@@ -192,7 +232,15 @@ async def run_ytdlp_async(
     started = time.time()
     try:
         tasks = [
-            _run_one(u, sem, output_dir=output_dir, cookies_file=tmp_cookie_path, extra_args=extra_args)
+            _run_one(
+                u, sem,
+                output_dir=output_dir,
+                cookies_file=tmp_cookie_path,
+                extra_args=extra_args,
+                concurrent_fragments=concurrent_fragments,
+                limit_rate=limit_rate,
+                sleep_interval=sleep_interval,
+            )
             for u in urls
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -241,6 +289,9 @@ async def download(payload: DownloadPayload):
             output_dir=payload.output_dir,
             cookies_txt=payload.cookies_txt,
             extra_args=payload.extra_args,
+            limit_rate=payload.limit_rate,
+            sleep_interval=payload.sleep_interval,
+            concurrent_fragments=payload.concurrent_fragments,
         )
         return result
     except Exception as e:

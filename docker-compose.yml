@@ -1,0 +1,20 @@
+services:
+  downloader:
+    build: .
+    container_name: 4linux-downloader
+    restart: unless-stopped
+    ports:
+      - "8000:8000"          # acesse em http://IP_DA_VM:8000
+    environment:
+      - CHROMIUM_NO_SANDBOX=1 # obrigatório: Chromium como root em container
+      # - DEBUG_HEADFUL=1     # (não usar em servidor sem tela)
+    volumes:
+      - ./data:/app/data      # logs, cookies, lista de URLs, relatório, histórico
+      - ./downloads:/downloads # vídeos baixados ficam aqui (na VM)
+    shm_size: "1gb"           # folga de memória compartilhada pro Chromium
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz').status==200 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s

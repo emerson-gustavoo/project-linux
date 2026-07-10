@@ -76,6 +76,9 @@ async def start(
     out_dir: str = Form(...),
     ffmpeg_dir: str = Form(""),
     workers: int = Form(3),
+    limit_rate: str = Form(""),
+    sleep_interval: int = Form(0),
+    fragments: int = Form(4),
     cookies: UploadFile = File(None),
 ):
     reset_log()
@@ -121,7 +124,19 @@ async def start(
 
             # iniciar downloads com runner assíncrono
             os.makedirs(out_dir, exist_ok=True)
-            log("Iniciando downloads com yt-dlp…")
+
+            # normaliza os freios vindos do form
+            rate = (limit_rate or "").strip() or None
+            sleep_s = int(sleep_interval or 0)
+            frags = int(fragments or 4)
+
+            freios = []
+            if rate:
+                freios.append(f"limit-rate={rate}")
+            if sleep_s > 0:
+                freios.append(f"sleep={sleep_s}s")
+            freios.append(f"fragmentos={frags}")
+            log(f"Iniciando downloads com yt-dlp… (workers={workers} | {' | '.join(freios)})")
 
             # lê cookies.txt para passar inline
             with open(COOKIES_PATH, "r", encoding="utf-8") as f:
@@ -142,6 +157,9 @@ async def start(
                 output_dir=out_dir,
                 cookies_txt=cookies_txt,
                 extra_args=extra_args,
+                limit_rate=rate,
+                sleep_interval=sleep_s,
+                concurrent_fragments=frags,
             ))
 
             log(

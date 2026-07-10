@@ -1,0 +1,33 @@
+# Git / build context
+.git/
+.gitignore
+.dockerignore
+Dockerfile
+docker-compose.yml
+README.md
+
+# Ambiente virtual local (binários Windows — não vão pro Linux)
+venv/
+
+# Caches Python
+__pycache__/
+*.py[cod]
+*.log
+
+# Dados e mídia (vêm de volumes na VM, não da imagem)
+data/
+downloads/
+*.mp4
+*.mkv
+*.webm
+*.part
+*.ytdl
+
+# IDE / SO
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Scripts locais
+start_server.bat
